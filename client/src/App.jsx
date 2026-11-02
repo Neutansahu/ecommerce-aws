@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from './api.js';
 
 export default function App() {
-  const [view, setView] = useState('products'); // products | cart | login | orders
+  const [view, setView] = useState('products'); // products | cart | login | orders | admin
   const [products, setProducts] = useState([]);
   const [cart, setCart] = useState({}); // { productId: quantity }
   const [token, setToken] = useState(localStorage.getItem('token') || '');
@@ -22,10 +22,12 @@ export default function App() {
       return n;
     });
 
-  const cartItems = Object.entries(cart).map(([id, quantity]) => ({
-    product: products.find((p) => p.id === Number(id)),
-    quantity,
-  })).filter((i) => i.product);
+  const cartItems = Object.entries(cart)
+    .map(([id, quantity]) => ({
+      product: products.find((p) => p.id === Number(id)),
+      quantity,
+    }))
+    .filter((i) => i.product);
   const total = cartItems.reduce((s, i) => s + i.product.price * i.quantity, 0);
   const count = Object.values(cart).reduce((a, b) => a + b, 0);
 
@@ -64,6 +66,9 @@ export default function App() {
           {user ? (
             <>
               <button onClick={() => { setView('orders'); loadOrders(); }}>Orders</button>
+              {user.role === 'admin' && (
+                <button onClick={() => setView('admin')}>Admin</button>
+              )}
               <button onClick={logout}>Logout ({user.name})</button>
             </>
           ) : (
@@ -138,6 +143,14 @@ export default function App() {
             ))}
           </div>
         )}
+
+        {view === 'admin' && user?.role === 'admin' && (
+          <AdminForm
+            token={token}
+            onMsg={setMsg}
+            onAdded={() => api('/products').then(setProducts)}
+          />
+        )}
       </main>
     </div>
   );
@@ -176,6 +189,61 @@ function AuthForm({ onDone, onMsg }) {
       <p className="link" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
         {mode === 'login' ? 'New user? Register' : 'Have an account? Login'}
       </p>
+    </div>
+  );
+}
+
+function AdminForm({ token, onMsg, onAdded }) {
+  const empty = { name: '', description: '', price: '', stock: '' };
+  const [f, setF] = useState(empty);
+  const [file, setFile] = useState(null);
+  const [fileKey, setFileKey] = useState(0); // changing this resets the file input
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+
+  const submit = async () => {
+    try {
+      let image_url = '';
+      if (file) {
+        const fd = new FormData();
+        fd.append('image', file);
+        const r = await fetch('/api/products/upload', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          body: fd,
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Image upload failed');
+        image_url = d.image_url;
+      }
+      await api('/products', {
+        method: 'POST',
+        token,
+        body: { ...f, price: Number(f.price), stock: Number(f.stock), image_url },
+      });
+      onMsg('Product added');
+      setF(empty);
+      setFile(null);
+      setFileKey((k) => k + 1);
+      onAdded();
+    } catch (e) {
+      onMsg(e.message);
+    }
+  };
+
+  return (
+    <div className="form">
+      <h2>Add product (admin)</h2>
+      <input placeholder="Name" value={f.name} onChange={set('name')} />
+      <input placeholder="Description" value={f.description} onChange={set('description')} />
+      <input placeholder="Price" type="number" value={f.price} onChange={set('price')} />
+      <input placeholder="Stock" type="number" value={f.stock} onChange={set('stock')} />
+      <input
+        key={fileKey}
+        type="file"
+        accept="image/*"
+        onChange={(e) => setFile(e.target.files[0] || null)}
+      />
+      <button onClick={submit}>Add product</button>
     </div>
   );
 }

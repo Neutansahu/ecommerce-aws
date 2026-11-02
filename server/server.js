@@ -4,6 +4,18 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const mysql = require('mysql2/promise');
+const multer = require('multer');
+const crypto = require('crypto');
+const path = require('path');
+const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+
+const s3 = new S3Client({ region: process.env.AWS_REGION });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },               // 5 MB
+  fileFilter: (req, file, cb) =>
+    cb(null, ['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype)),
+});
 
 const app = express();
 app.use(cors());
@@ -28,6 +40,23 @@ function auth(req, res, next) {
     res.status(401).json({ error: 'Unauthorized' });
   }
 }
+app.post('/api/products/upload', auth, adminOnly, upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Only jpg, png, webp up to 5 MB' });
+    const ext = path.extname(req.file.originalname).toLowerCase();
+    const key = `images/${crypto.randomUUID()}${ext}`;
+    await s3.send(new PutObjectCommand({
+      Bucket: process.env.S3_BUCKET,
+      Key: key,
+      Body: req.file.buffer,
+      ContentType: req.file.mimetype,
+    }));
+    res.json({ image_url: '/' + key });                 // served by CloudFront at /images/...
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Upload failed' });
+  }
+});
 function adminOnly(req, res, next) {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   next();
